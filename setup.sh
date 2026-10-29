@@ -1,6 +1,4 @@
-
 #!/usr/bin/env bash
-set -Eeuo pipefail
 
 # Must be run as root
 if [[ $EUID -ne 0 ]]; then
