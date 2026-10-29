@@ -1,77 +1,50 @@
 #!/usr/bin/env bash
+set -Eeuo pipefail
 
-# Must be run as root
+# Debe ejecutarse como root
 if [[ $EUID -ne 0 ]]; then
-    echo "Please run as root: sudo $0"
+    echo "Ejecuta este script con sudo."
     exit 1
 fi
 
-BACKUP_SUFFIX="$(date +%Y%m%d-%H%M%S)"
-TMP_CONFIG="$(mktemp)"
-trap 'rm -f "$TMP_CONFIG"' EXIT
+KWRITECONFIG="$(command -v kwriteconfig5 || true)"
 
-# KDE Plasma KWin configuration
-cat > "$TMP_CONFIG" <<'KWINRC'
-[Version]
-update_info=kwin.upd:replace-scalein-with-scale,kwin.upd:port-minimizeanimation-effect-to-js,kwin.upd:port-scale-effect-to-js,kwin.upd:port-dimscreen-effect-to-js,kwin.upd:auto-bordersize,kwin.upd:animation-speed,kwin.upd:desktop-grid-click-behavior,kwin.upd:no-swap-encourage,kwin.upd:make-translucency-effect-disabled-by-default,kwin.upd:remove-flip-switch-effect,kwin.upd:remove-cover-switch-effect,kwin.upd:remove-cubeslide-effect,kwin.upd:remove-xrender-backend,kwin.upd:enable-scale-effect-by-default,kwin.upd:overview-group-plugin-id,kwin.upd:animation-speed-cleanup,kwin.upd:replace-cascaded-zerocornered
+if [[ -z "$KWRITECONFIG" ]]; then
+    echo "No se encuentra kwriteconfig5. Instala las herramientas de KDE Plasma 5."
+    exit 1
+fi
 
-[Desktops]
-Id_1=30d131be-27ed-4b46-b150-0ff3e93beb89
-TabBox=false
-TabBoxAlternative=false
+configure_user() {
+    local home="$1"
+    local config="$home/.config/kwinrc"
 
-[Effect-presentwindows]
-BorderActivate=9
-BorderActivateAll=9
-BorderActivateClass=9
+    mkdir -p "$home/.config"
 
-[ModifierOnlyShortcuts]
-Meta=
-
-[Tiling]
-padding=4
-
-[Tiling][08bd8f3d-43f1-541a-9683-41a5bd29b473]
-tiles={"layoutDirection":"horizontal","tiles":[{"width":0.25},{"width":0.5},{"width":0.25}]}
-
-[org.kde.kdecoration2]
-BorderSizeAuto=false
-KWINRC
-
-install_config() {
-    local target="$1"
-    local owner="${2:-}"
-    local group="${3:-}"
-
-    mkdir -p "$(dirname "$target")"
-
-    # Back up existing configuration before replacing it
-    if [[ -f "$target" ]]; then
-        cp -a "$target" "${target}.bak.${BACKUP_SUFFIX}"
-        echo "Backup created: ${target}.bak.${BACKUP_SUFFIX}"
+    # Crear copia de seguridad si el archivo ya existe
+    if [[ -f "$config" ]]; then
+        cp -p "$config" "$config.bak"
     fi
 
-    install -m 0644 "$TMP_CONFIG" "$target"
+    # Establecer la configuración de KWin
+    "$KWRITECONFIG" --file "$config" \
+        --group ModifierOnlyShortcuts \
+        --key Meta ""
 
-    if [[ -n "$owner" && -n "$group" ]]; then
-        chown "$owner:$group" "$target"
-    fi
-
-    echo "Installed: $target"
+    echo "Configurado: $config"
 }
 
-# 1. Default configuration for newly created users
-install_config "/etc/skel/.config/kwinrc"
+# 1. Usuarios existentes con UID de usuario normal
+while IFS=: read -r username _ uid _ _ home shell; do
+    [[ "$uid" -ge 1000 ]] 2>/dev/null || continue
+    [[ "$shell" != */nologin && "$shell" != */false ]] || continue
+    [[ -n "$home" && -d "$home" ]] || continue
 
-# 2. Existing regular users with home directories under /home
-while IFS=: read -r username _ uid gid _ home _; do
-    [[ "$uid" =~ ^[0-9]+$ ]] || continue
-    (( uid >= 1000 )) || continue
-    [[ "$home" == /home/* && -d "$home" ]] || continue
-
-    install_config "$home/.config/kwinrc" "$uid" "$gid"
+    configure_user "$home"
 done < <(getent passwd)
 
+# 2. Plantilla para usuarios nuevos
+configure_user "/etc/skel"
+
 echo
-echo "KWin configuration installation complete."
-echo "Existing users may need to log out and back in."
+echo "Configuración aplicada."
+echo "Los usuarios deben cerrar y volver a abrir su sesión para asegurar que se aplique."
